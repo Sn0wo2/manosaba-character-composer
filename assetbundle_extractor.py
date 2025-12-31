@@ -21,8 +21,8 @@ from UnityPy.classes import TextAsset, Texture2D, AudioClip, AssetBundle, Sprite
 ILLEGAL_CHARS_RE = re.compile(r'[<>:"/\\|?*#]')
 
 def _sanitize_name(name: str) -> str:
-        """替换文件名/路径中不合法的字符为下划线"""
-        return ILLEGAL_CHARS_RE.sub('_', name)
+    """替换文件名/路径中不合法的字符为下划线"""
+    return ILLEGAL_CHARS_RE.sub('_', name)
 
 # 辅助函数：在树中查找节点
 def _find_node(container: Dict[str, Any], target_id: str) -> Optional[Dict[str, Any]]:
@@ -94,18 +94,18 @@ class AssetBundleExtractor:
     def _prepare_output_dir(self, file_path: str) -> Path:
         file_path: Path = Path(file_path)
         relative_path = file_path.relative_to(self.input_dir)
-        
+
         sanitized_parts = [_sanitize_name(part) for part in relative_path.parent.parts]
         sanitized_stem = _sanitize_name(file_path.stem)
-        
+
         out_dir = self.output_dir.joinpath(*sanitized_parts, sanitized_stem)
-        
+
         if self.skip_exists_dir and out_dir.exists() and any(out_dir.iterdir()):
             return None
-        
+
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir
-    
+
     def _skip_if_exists(self, path: Path) -> bool:
         """检查文件是否存在且大小一致，存在则跳过"""
         if path.exists():
@@ -113,7 +113,7 @@ class AssetBundleExtractor:
             self.type_counter["skipped"] += 1
             return True
         return False
-    
+
     def _get_json_lock(self, json_path: Path):
         """获取指定json文件的锁（如无则创建）"""
         key = str(json_path.resolve())
@@ -142,10 +142,20 @@ class AssetBundleExtractor:
         res_name = getattr(data, "m_Name", None) or f"unnamed_{obj.path_id}"
         sanitized_res_name = _sanitize_name(res_name)
         out_base_path = out_dir / sanitized_res_name
-        out_path = out_base_path.with_suffix(".webp")
+        img = data.image
+        # WebP limits dimensions to 16383x16383. Fallback to PNG for larger images.
+        if img.width > 16383 or img.height > 16383:
+            out_path = out_base_path.with_suffix(".png")
+            save_format = "PNG"
+            save_kwargs = {}
+        else:
+            out_path = out_base_path.with_suffix(".webp")
+            save_format = "WEBP"
+            save_kwargs = {"lossless": True}
+
         if not self._skip_if_exists(out_path):
             try:
-                data.image.save(out_path, format="WEBP", lossless=True)
+                img.save(out_path, format=save_format, **save_kwargs)
                 self.type_counter["image"] += 1
             except Exception as e:
                 self._log("error", f"图片保存失败: {out_path} | {e}")
@@ -173,7 +183,7 @@ class AssetBundleExtractor:
             output_wav_path = out_base_path.with_suffix(".wav")
             output_wav_path.write_bytes(data.samples)
         self.type_counter["audio"] += 1
-    
+
     def _get_transform_info(self, transform: Transform):
         """提取 Transform 信息"""
         return {
@@ -194,7 +204,7 @@ class AssetBundleExtractor:
                 "z": transform.m_LocalScale.z,
             } if getattr(transform, "m_LocalScale", None) else None,
         }
-        
+
     def _get_sprite_renderer_info(self, sprite_renderer: SpriteRenderer):
         """提取 SpriteRenderer 关键信息（仅保留渲染和 Mask 相关字段）"""
         sprite = sprite_renderer.m_Sprite.read() if getattr(sprite_renderer, "m_Sprite", None) else None
@@ -242,8 +252,8 @@ class AssetBundleExtractor:
             } if getattr(sprite_renderer, "m_Color", None) else None,
             "Materials": material_infos
         }
-        
-        
+
+
     def _get_sub_components(self, data: GameObject, comp_type_names: list[str]) -> dict[str, EditorExtension]:
         """获取 GameObject 的子组件，返回类型名到组件对象的映射"""
         components: dict[str, EditorExtension] = {}
@@ -259,8 +269,8 @@ class AssetBundleExtractor:
                 except Exception:
                     continue
         return components
-    
-    
+
+
     def _handle_gameobject(self, obj: ObjectReader, out_dir: Path):
         """
         导出 GameObject 的 Transform 和 SpriteRenderer 信息到 GameObject.json
@@ -371,7 +381,7 @@ class AssetBundleExtractor:
         self._log("debug", f"递归处理 AssetBundle: {getattr(data, 'm_Name', 'unknown')}")
         container = getattr(data, "m_Container", {})
         entries = container.items() if isinstance(container, dict) else container
-        
+
         for entry in entries:
             try:
                 name, pptr = entry
@@ -382,7 +392,7 @@ class AssetBundleExtractor:
 
             except Exception as e:
                 self._log("error", f"AssetBundle 子对象处理失败: {entry} | {e}")
-        
+
         return "assetbundle"
 
     def extract_all(self):
@@ -435,7 +445,7 @@ class AssetBundleExtractor:
             if self.skip_AssetBundle and obj.type.name == "AssetBundle":
                 continue
             self.process_object(obj, out_dir, file_path)
-        
+
         self._log("debug", f"完成文件: {file_path}")
 
     def _handler_update_pbar(self, handler, *args, **kwargs):
@@ -445,12 +455,12 @@ class AssetBundleExtractor:
         except Exception as e:
             self._log("error", f"处理资源失败: {e}")
         self._update_pbar(1)
-        
+
     def _update_pbar_total(self, increment=1):
         if self.pbar:
             self.pbar.total += increment
             self.pbar.refresh()
-            
+
     def _update_pbar(self, n=1):
         if self.pbar:
             self.pbar.update(n)
@@ -476,11 +486,11 @@ class AssetBundleExtractor:
                 # self._update_pbar(1)
                 self.type_counter[obj.type.name] += 1
                 # self._log("debug", f"跳过资源类型: {obj.type.name} | {file_path}")
-        
+
         except Exception as e:
             self._update_pbar(1)
             self._log("error", f"资源处理失败: {file_path} | {obj.path_id} | {e}")
-            
+
 if __name__ == "__main__":
     input_dir = r"D:\Steam\steamapps\common\manosaba_game\manosaba_Data\StreamingAssets\aa\StandaloneWindows64"
     output_dir = r"D:\manosaba"
