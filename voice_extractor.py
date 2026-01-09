@@ -1,10 +1,12 @@
 from dataclasses import dataclass, asdict
-from typing import List, Optional
+from typing import List, Optional, Dict
 import re
 import json
 import os
 import glob
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 @dataclass
 class NaninovelEntry:
@@ -150,33 +152,57 @@ class NaninovelScript:
                 "entries": [asdict(e) for e in self.entries]
             }, f, ensure_ascii=False, indent=2)
 
-# 使用示例
-if __name__ == "__main__":
-    input_dir = r"D:\manosaba"
-    output_dir = r"D:\manosaba_voice_lists"
-    os.makedirs(output_dir, exist_ok=True)
-    character_map = defaultdict(list)
-    files = glob.glob(os.path.join(input_dir, "general-localization-*-scripts-*", "*.txt"))
-    for file in files:
-        print(f"Processing file: {file}")
+def process_script_file(file: str, input_dir: str):
+    """处理单个脚本文件并返回结果"""
+    try:
         script = NaninovelScript(file)
-        # 输出所有 ; > 开头的内容
-        if script.other_remarks:
-            print(f"> lines in {file}:")
-            for remark in script.other_remarks:
-                print(remark)
+        results = []
+        
         dir_name = script.metadata.file_dir.split('-')[-1]
         if dir_name == "common_assets_all":
             voice_dir = os.path.join(input_dir, f"general-voice-{script.id.lower()}_assets_all")
         else:
             voice_dir = os.path.join(input_dir, f"general-voice-{dir_name}")
+            
         for entry in script.entries:
             if entry.character and entry.voice_id:
+                # 优化：先检查目录是否存在，减少文件系统调用
                 voice_path = os.path.join(voice_dir, entry.voice_id, f"{entry.voice_id}.wav")
                 if os.path.exists(voice_path):
-                    character_map[entry.character].append(f"{voice_path}|slicer_opt|JP|{entry.source_plain}")
+                    results.append((entry.character, f"{voice_path}|slicer_opt|JP|{entry.source_plain}"))
+        return results
+    except Exception as e:
+        print(f"Error processing {file}: {e}")
+        return []
+
+# 使用示例
+if __name__ == "__main__":
+    input_dir = r"D:\manosaba"
+    output_dir = r"D:\manosaba_voice_lists"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    character_map = defaultdict(list)
+    files = glob.glob(os.path.join(input_dir, "general-localization-*-scripts-*", "*.txt"))
+    
+    print(f"Found {len(files)} script files. Starting parallel processing...")
+    
+    # 使用线程池并发处理文件
+    max_workers = os.cpu_count() or 4
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {executor.submit(process_script_file, file, input_dir): file for file in files}
+        
+        for future in as_completed(future_to_file):
+            file_results = future.result()
+            for char, line in file_results:
+                character_map[char].append(line)
                 
+    print(f"Processing complete. Saving {len(character_map)} character lists...")
+    
+    # 保存结果
     for character, voices in character_map.items():
-        with open(os.path.join(output_dir, f"{character}.list"), "w", encoding="utf-8") as f:
+        output_path = os.path.join(output_dir, f"{character}.list")
+        with open(output_path, "w", encoding="utf-8") as f:
             for voice in voices:
                 f.write(voice + "\n")
+    
+    print("Done!")
